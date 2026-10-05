@@ -1,0 +1,162 @@
+import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+
+import { ResourceCache } from '#core/cache/resource'
+
+const PREVIEW_EDGES = [128, 256, 512, 1024, 2048] as const
+const MAX_PENDING = 64
+const PREVIEW_CACHE_BYTES = 64 * 1024 * 1024
+
+export function useViewportImageRendering(graph: SceneGraph): boolean {
+  if (graph.images.size > 128) return true
+  let bytes = 0
+  for (const data of graph.images.values()) {
+    bytes += data.byteLength
+    if (bytes > 32 * 1024 * 1024) return true
+  }
+  return false
+}
+
+export function previewEdge(node: Pick<SceneNode, 'width' | 'height'>, zoom: number, dpr = 1) {
+  const pixels = Math.max(node.width, node.height) * zoom * dpr
+  return PREVIEW_EDGES.find((edge) => edge >= pixels) ?? 2048
+}
+
+export interface ImagePreview {
+  bytes: Uint8Array<ArrayBuffer>
+  originalWidth: number
+  originalHeight: number
+}
+
+/** Browser adapters decode outside the CanvasKit heap; Core stays platform independent. */
+export interface ImagePreviewDecoder {
+  decode(source: Uint8Array, edge: number): Promise<ImagePreview>
+  destroy(): void
+}
+
+interface PreviewEntry {
+  source: Uint8Array
+  preview?: ImagePreview
+}
+interface PreviewJob {
+  key: string
+  source: Uint8Array
+  edge: number
+}
+
+/** Per-renderer encoded LRU, with serialized and bounded asynchronous decoding. */
+export class ImagePreviewCache {
+  private readonly entries: ResourceCache<string, PreviewEntry>
+  private readonly pending = new Map<string, PreviewJob>()
+  private graph: SceneGraph | null = null
+  private queue: PreviewJob[] = []
+  private decoder: ImagePreviewDecoder | null = null
+  private active = false
+  private disposed = false
+  private generation = 0
+
+  constructor(
+    private readonly ready: () => void,
+    maxBytes = PREVIEW_CACHE_BYTES
+  ) {
+    this.entries = new ResourceCache({
+      maxEntries: 256,
+      maxWeight: maxBytes,
+      weight: (entry) => entry.preview?.bytes.byteLength ?? 1
+    })
+  }
+
+  get bytes(): number {
+    return this.entries.weight
+  }
+  private canDecode(): boolean {
+    return !this.disposed && this.decoder !== null
+  }
+  get enabled(): boolean {
+    return this.canDecode()
+  }
+  get idle(): boolean {
+    return !this.active && this.queue.length === 0
+  }
+
+  setDecoder(decoder: ImagePreviewDecoder) {
+    this.reset()
+    this.decoder?.destroy()
+    this.decoder = decoder
+  }
+
+  private reset() {
+    this.generation++
+    this.entries.clear()
+    this.pending.clear()
+    this.queue = []
+  }
+
+  get(
+    graph: SceneGraph,
+    hash: string,
+    edge: number
+  ): { key: string; preview: ImagePreview } | undefined {
+    if (!this.enabled) return undefined
+    if (this.graph !== graph) {
+      this.reset()
+      this.graph = graph
+    }
+    const source = graph.images.get(hash)
+    if (!source) return undefined
+    const key = `${hash}:preview:${edge}`
+    const existing = this.entries.peek(key)
+    if (existing && existing.source !== source) this.entries.delete(key)
+    if (!this.entries.has(key) && !this.pending.has(key) && this.pending.size < MAX_PENDING) {
+      const job = { key, source, edge }
+      this.pending.set(key, job)
+      this.queue.push(job)
+      void this.drain()
+    }
+    // Keep an available level visible while the requested resolution is decoding.
+    for (const candidate of [edge, ...[...PREVIEW_EDGES].reverse().filter((n) => n !== edge)]) {
+      const candidateKey = `${hash}:preview:${candidate}`
+      const entry = this.entries.get(candidateKey)
+      if (entry?.preview && entry.source === source)
+        return { key: candidateKey, preview: entry.preview }
+    }
+    return undefined
+  }
+
+  private async drain() {
+    if (this.active || !this.canDecode()) return
+    this.active = true
+    try {
+      while (this.queue.length && this.canDecode()) {
+        const job = this.queue.shift()
+        const decoder = this.decoder
+        if (!job || !decoder) break
+        const generation = this.generation
+        let preview: ImagePreview | undefined
+        try {
+          preview = await decoder.decode(job.source, job.edge)
+        } catch (error) {
+          if (generation === this.generation && !this.disposed)
+            console.warn('Image preview decode failed:', error)
+        }
+        if (this.disposed || generation !== this.generation || this.pending.get(job.key) !== job)
+          continue
+        this.pending.delete(job.key)
+        if (!this.entries.set(job.key, { source: job.source, preview })) {
+          // Remember oversized results as failures instead of decoding them on every repaint.
+          this.entries.set(job.key, { source: job.source })
+        }
+        if (preview) this.ready()
+      }
+    } finally {
+      this.active = false
+    }
+  }
+
+  destroy() {
+    this.disposed = true
+    this.reset()
+    this.decoder?.destroy()
+    this.decoder = null
+    this.graph = null
+  }
+}

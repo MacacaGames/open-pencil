@@ -70,6 +70,8 @@
 
 ### Fixed
 
+- Open image-heavy Figma files without accumulating every full-resolution image in the canvas heap; viewport previews follow zoom while exports keep the original images.
+
 - Report what `linearGradient`, `radialGradient`, `angularGradient`, and `diamondGradient` expect when design JSX passes them something other than an array of stops, such as `linearGradient('#3b82f6')`, instead of failing with `stops.map is not a function`, so an AI agent can correct the call.
 - Keep the canvas context menu open when you right-click again right after closing it, which could close it again at once, especially with reduced motion.
 - Show and edit the component properties of an instance nested inside another instance; they were missing because the nested instance was read as its own component.
