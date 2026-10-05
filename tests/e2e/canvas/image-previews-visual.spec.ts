@@ -16,12 +16,13 @@ test('large-document previews preserve image fill modes and strokes across zoom'
   expect(await editor.canvas.screenshotCanvasRegion()).toMatchSnapshot(
     'viewport-image-previews.png'
   )
-  await editor.page.evaluate(() => {
-    const store = window.openPencil?.getStore?.()
-    if (!store) throw new Error('Editor unavailable')
-    store.state.zoom = 1
-    store.requestRepaint()
-  })
+  await editor.canvas.hover(200, 150)
+  await editor.page.keyboard.down('Control')
+  try {
+    await editor.page.mouse.wheel(0, -10)
+  } finally {
+    await editor.page.keyboard.up('Control')
+  }
   await expect
     .poll(async () =>
       (await imagePreviewState(editor.page)).keys.some((key) => key.endsWith(':preview:512'))

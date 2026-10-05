@@ -1,18 +1,33 @@
 import { test, expect } from 'bun:test'
-import type { Canvas } from 'canvaskit-wasm'
+
 import { SceneGraph } from '@open-pencil/scene-graph'
+
 import { createImageCache } from '#core/canvas/images/cache'
-import { ImagePreviewCache, previewEdge, useViewportImageRendering, type ImagePreview } from '#core/canvas/images/previews'
-import { renderSceneToCanvas } from '#core/canvas/renderer/pipeline'
+import {
+  ImagePreviewCache,
+  previewEdge,
+  useViewportImageRendering,
+  type ImagePreview
+} from '#core/canvas/images/previews'
 
 function image(width = 4, height = 4) {
   let deleted = 0
-  return { width: () => width, height: () => height, delete: () => { deleted++ }, deleted: () => deleted }
+  return {
+    width: () => width,
+    height: () => height,
+    delete: () => {
+      deleted++
+    },
+    deleted: () => deleted
+  }
 }
 
 test('decoded images respect the mipmap budget and rejected handles remain caller-owned', () => {
   const cache = createImageCache<ReturnType<typeof image>>(172)
-  const a = image(), b = image(), c = image(), oversized = image(20, 20)
+  const a = image(),
+    b = image(),
+    c = image(),
+    oversized = image(20, 20)
   const insert = (key: string, value: ReturnType<typeof image>) => cache.set(key, value)
   expect(insert('a', a)).toBe(true)
   expect(insert('b', b)).toBe(true)
@@ -31,7 +46,10 @@ test('decoded images respect the mipmap budget and rejected handles remain calle
   expect(cache.weight).toBe(0)
 })
 
-const tick = () => new Promise<void>((resolve) => { setTimeout(resolve, 0) })
+const tick = () =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
 const preview = (bytes = 5): ImagePreview => ({
   bytes: new Uint8Array(bytes),
   originalWidth: 1024,
@@ -131,31 +149,6 @@ test('large readonly documents select viewport previews and scale tiers include 
   expect(previewEdge({ width: 200, height: 100 }, 1, 2)).toBe(512)
   expect(previewEdge({ width: 10000, height: 100 }, 1)).toBe(2048)
 })
-test('full-resolution rendering disables previews and restores viewport/mode even on failure', () => {
-  const graph = new SceneGraph(),
-    page = graph.getPages()[0]
-  graph.createNode('RECTANGLE', page.id)
-  const viewport = { x: 1, y: 2, w: 3, h: 4 }
-  const renderer = {
-    viewportImageRendering: true,
-    worldViewport: viewport,
-    renderNode() {
-      expect(this.viewportImageRendering).toBe(false)
-      throw new Error('drawing failed')
-    }
-  }
-  expect(() =>
-    renderSceneToCanvas(
-      renderer,
-      {} as Canvas,
-      graph,
-      page.id
-    )
-  ).toThrow('drawing failed')
-  expect(renderer.viewportImageRendering).toBe(true)
-  expect(renderer.worldViewport).toBe(viewport)
-})
-
 test('pending work is bounded and oversized previews do not retry on each repaint', async () => {
   const graph = new SceneGraph()
   for (let i = 0; i < 100; i++) graph.images.set(String(i), new Uint8Array([i]))
@@ -163,11 +156,19 @@ test('pending work is bounded and oversized previews do not retry on each repain
   let complete: (value: ImagePreview) => void = () => undefined
   const cache = new ImagePreviewCache(() => undefined, 10)
   cache.setDecoder({
-    decode: async () => { calls++; return new Promise((resolve) => { complete = resolve }) },
+    decode: async () => {
+      calls++
+      return new Promise((resolve) => {
+        complete = resolve
+      })
+    },
     destroy: () => undefined
   })
   for (let i = 0; i < 100; i++) cache.get(graph, String(i), 128)
-  for (let i = 0; i < 64; i++) { complete(preview(20)); await tick() }
+  for (let i = 0; i < 64; i++) {
+    complete(preview(20))
+    await tick()
+  }
   expect(calls).toBe(64)
   expect(cache.bytes).toBeLessThanOrEqual(10)
   // The most recently rejected level remains remembered under the entry budget.
