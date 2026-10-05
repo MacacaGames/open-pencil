@@ -44,7 +44,7 @@ export async function createImagePreviewScene(page: Page) {
         width: 256,
         height: 256,
         fills: [paint],
-        strokes: [{ ...paint, width: 12, align: 'OUTSIDE' }]
+        strokes: [{ ...paint, weight: 12, align: 'OUTSIDE' }]
       })
     }
     store.state.zoom = 0.5

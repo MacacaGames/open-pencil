@@ -11,6 +11,7 @@ import { prepareSelectionRenderGraph } from '#core/io/formats/raster/render'
 import { extractExportGraph } from '#core/io/subgraph'
 
 import { expectDefined } from '#tests/helpers/assert'
+import { asDouble } from '#tests/helpers/doubles'
 
 let ck: Awaited<ReturnType<typeof initCanvasKit>>
 
@@ -52,7 +53,7 @@ describe('raster export', () => {
         throw new Error('drawing failed')
       }
     }
-    expect(() => renderSceneToCanvas(renderer, {} as Canvas, graph, page.id)).toThrow(
+    expect(() => renderSceneToCanvas(renderer, asDouble<Canvas>({}), graph, page.id)).toThrow(
       'drawing failed'
     )
     expect(renderer.viewportImageRendering).toBe(true)
@@ -195,7 +196,7 @@ describe('raster export', () => {
     const vector = graph.createNode('VECTOR', page.id, {
       width: 10,
       height: 10,
-      fillGeometry: [{ commandsBlob: rectangleCommandsBlob(1, 1, 8, 8) }],
+      fillGeometry: [{ windingRule: 'NONZERO', commandsBlob: rectangleCommandsBlob(1, 1, 8, 8) }],
       fills: [
         {
           type: 'SOLID',
