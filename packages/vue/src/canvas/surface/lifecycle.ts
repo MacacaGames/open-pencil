@@ -9,7 +9,13 @@ import {
   supportsWideGamutPresentation,
   type PresentationColorSpace
 } from '#vue/canvas/surface/color-space'
-import { makeGLSurface, sizeCanvas, type CanvasGLContext } from '#vue/canvas/surface/gl-surface'
+import {
+  makeGLSurface,
+  releaseWebGLContext,
+  sizeCanvas,
+  type CanvasGLContext,
+  type CanvasGLHandle
+} from '#vue/canvas/surface/gl-surface'
 import { createImagePreviewDecoder } from '#vue/canvas/surface/image-preview'
 import { useCanvasKitLoader } from '#vue/canvas/surface/kit-loader'
 import { createCanvasRenderLoop } from '#vue/canvas/surface/render-loop'
@@ -19,6 +25,9 @@ import type { UseCanvasOptions } from '#vue/canvas/surface/types'
 type SurfaceManagerState = {
   renderer: SkiaRenderer | null
   glContext: CanvasGLContext | null
+  glHandle: CanvasGLHandle | null
+  /** The canvas the WebGL context belongs to, kept until the context is released. */
+  glCanvas: HTMLCanvasElement | null
   presentation: PresentationColorSpace | null
 }
 
@@ -37,13 +46,29 @@ export function createCanvasSurfaceManager({
   isDestroyed: () => boolean
   shouldShowRulers: () => boolean
 }) {
-  const state: SurfaceManagerState = { renderer: null, glContext: null, presentation: null }
+  const state: SurfaceManagerState = {
+    renderer: null,
+    glContext: null,
+    glHandle: null,
+    glCanvas: null,
+    presentation: null
+  }
   let sceneBackingRenderTimer: ReturnType<typeof setTimeout> | null = null
 
   function clearSceneBackingRenderTimer() {
     if (sceneBackingRenderTimer === null) return
     clearTimeout(sceneBackingRenderTimer)
     sceneBackingRenderTimer = null
+  }
+
+  /** Releases the Skia context and the WebGL context CanvasKit registered for this canvas. */
+  function releaseGLContext() {
+    state.glContext?.delete()
+    state.glContext = null
+    const ck = getCanvasKit()
+    if (ck && state.glHandle !== null) releaseWebGLContext(ck, state.glHandle, state.glCanvas)
+    state.glHandle = null
+    state.glCanvas = null
   }
 
   function createSurface(
@@ -56,8 +81,7 @@ export function createCanvasSurfaceManager({
     if (state.renderer) editor.removeCanvasRenderer(state.renderer)
     state.renderer?.destroy()
     state.renderer = null
-    state.glContext?.delete()
-    state.glContext = null
+    releaseGLContext()
 
     sizeCanvas(canvas, editor, options?.onViewportResize)
 
@@ -69,6 +93,8 @@ export function createCanvasSurfaceManager({
       editor.graph.documentColorSpace
     )
     state.glContext = result.glContext
+    state.glHandle = result.glHandle
+    state.glCanvas = result.glHandle === null ? null : canvas
     state.presentation = result.presentation
     options?.onPresentation?.(result.presentation)
     const surface = result.surface
@@ -197,7 +223,7 @@ export function createCanvasSurfaceManager({
     renderLoop.pause()
     if (state.renderer) editor.removeCanvasRenderer(state.renderer)
     state.renderer?.destroy()
-    state.glContext?.delete()
+    releaseGLContext()
   }
 
   return {
